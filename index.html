@@ -1,0 +1,1099 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Painel de Controle de Serviços de Engenharia</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = {
+    darkMode: 'class',
+    theme: {
+      extend: {
+        fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
+        colors: {
+          brand: { 50:'#ecfeff',100:'#cffafe',200:'#a5f3fc',400:'#22d3ee',500:'#0891b2',600:'#0e7490',700:'#155e63' }
+        }
+      }
+    }
+  }
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/date-fns@2.29.3/dist/date-fns.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+
+<style>
+  ::-webkit-scrollbar{width:5px;height:5px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:999px}
+  .dark ::-webkit-scrollbar-thumb{background:#334155}
+  .blueprint-grid{
+    background-image: linear-gradient(rgba(148,163,184,.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,.08) 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+  .progress-track{background:#e2e8f0}
+  .dark .progress-track{background:#1e293b}
+  @media print{
+    body *{visibility:hidden}
+    #printArea, #printArea *{visibility:visible}
+    #printArea{position:absolute;top:0;left:0;width:100%;padding:24px}
+  }
+</style>
+</head>
+<body class="bg-slate-50 dark:bg-[#080b11] text-slate-800 dark:text-slate-100 font-sans transition-colors duration-200 antialiased min-h-screen blueprint-grid">
+
+<div id="toastContainer" class="fixed bottom-5 right-5 z-50 flex flex-col gap-2 pointer-events-none"></div>
+<div id="printArea" class="hidden"></div>
+
+<!-- MODAL: AJUSTAR PRAZO -->
+<div id="deadlineModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+    <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+      <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">⏱️ Ajustar Prazo do Serviço</h3>
+      <button onclick="closeModal('deadlineModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg">✕</button>
+    </div>
+    <p id="modalServiceTitle" class="text-xs font-bold text-brand-600 dark:text-brand-400"></p>
+    <input type="hidden" id="modalServiceIndex">
+    <div class="space-y-3 text-xs">
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Data de Início</label>
+        <input type="date" id="modalStartDate" onchange="calcModalByDates()" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 outline-none">
+      </div>
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Duração do Prazo (Dias)</label>
+        <input type="number" id="modalDurationDays" min="1" oninput="calcModalByDays()" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 outline-none">
+      </div>
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Previsão Final de Entrega</label>
+        <input type="date" id="modalEndDate" onchange="calcModalByDates()" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 outline-none">
+      </div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+      <button onclick="closeModal('deadlineModal')" class="px-3.5 py-2 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition font-medium">Cancelar</button>
+      <button onclick="saveDeadlineModal()" class="px-4 py-2 text-xs bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow transition">Salvar Alteração</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: PROGRESSO -->
+<div id="progressModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+    <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+      <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">📈 Atualizar Progresso</h3>
+      <button onclick="closeModal('progressModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg">✕</button>
+    </div>
+    <p id="progressServiceTitle" class="text-xs font-bold text-brand-600 dark:text-brand-400"></p>
+    <input type="hidden" id="progressServiceIndex">
+    <div class="space-y-3 text-xs">
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Execução Física: <span id="progressValueLabel" class="font-bold text-slate-800 dark:text-slate-200">0%</span></label>
+        <input type="range" id="progressRange" min="0" max="100" step="5" oninput="document.getElementById('progressValueLabel').innerText = this.value + '%'" class="w-full accent-brand-600">
+      </div>
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Observação / Apontamento</label>
+        <textarea id="progressNote" rows="3" placeholder="Ex: Concluída sondagem do solo, aguardando laudo do laboratório" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 text-slate-900 dark:text-slate-100 outline-none resize-none"></textarea>
+      </div>
+      <div id="historyList" class="space-y-1 max-h-28 overflow-y-auto pr-1 text-[11px]"></div>
+    </div>
+    <div class="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+      <button onclick="closeModal('progressModal')" class="px-3.5 py-2 text-xs text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition font-medium">Cancelar</button>
+      <button onclick="saveProgressModal()" class="px-4 py-2 text-xs bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow transition">Salvar Apontamento</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL: CONFIGURAÇÕES -->
+<div id="settingsModal" class="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm hidden items-center justify-center p-4">
+  <div class="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 w-full max-w-md shadow-2xl space-y-4">
+    <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+      <h3 class="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">⚙️ Dados do Escritório</h3>
+      <button onclick="closeModal('settingsModal')" class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-lg">✕</button>
+    </div>
+    <div class="space-y-3 text-xs">
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Nome do Escritório / Empresa</label>
+        <input type="text" id="settCompany" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none">
+      </div>
+      <div>
+        <label class="block font-medium text-slate-500 mb-1">Engenheiro(a) Responsável</label>
+        <input type="text" id="settResponsible" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none">
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="block font-medium text-slate-500 mb-1">Registro (CREA/CAU)</label>
+          <input type="text" id="settCrea" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none">
+        </div>
+        <div>
+          <label class="block font-medium text-slate-500 mb-1">E-mail de Contato</label>
+          <input type="email" id="settEmail" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none">
+        </div>
+      </div>
+
+      <div class="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="font-bold text-slate-700 dark:text-slate-300">🔗 Sincronização com Google Agenda</span>
+          <span id="googleStatus" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500">Desconectado</span>
+        </div>
+        <div>
+          <label class="block font-medium text-slate-500 mb-1">Google Client ID</label>
+          <input type="text" id="settGoogleClientId" placeholder="xxxxx.apps.googleusercontent.com" class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none font-mono text-[11px]">
+        </div>
+        <div>
+          <label class="block font-medium text-slate-500 mb-1">Google API Key</label>
+          <input type="text" id="settGoogleApiKey" placeholder="AIza..." class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none font-mono text-[11px]">
+        </div>
+        <p class="text-[10px] text-slate-400">Salve as credenciais antes de conectar. A página precisa estar hospedada em http/https (não funciona em arquivo local).</p>
+        <button type="button" onclick="connectGoogle()" class="w-full px-3 py-2 text-[11px] bg-blue-500/10 text-blue-600 rounded-xl font-semibold hover:bg-blue-500/20">Conectar com Google Agenda</button>
+      </div>
+    </div>
+    <div class="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+      <div class="flex gap-1.5">
+        <button onclick="exportJSON()" class="px-3 py-2 text-[11px] bg-slate-100 dark:bg-slate-800 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700">⬇ Backup .json</button>
+        <label class="px-3 py-2 text-[11px] bg-slate-100 dark:bg-slate-800 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer">⬆ Restaurar
+          <input type="file" accept=".json" onchange="importJSON(event)" class="hidden">
+        </label>
+      </div>
+      <button onclick="saveSettings()" class="px-4 py-2 text-xs bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-xl shadow transition">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<div class="max-w-7xl mx-auto p-4 sm:p-8 space-y-6">
+
+  <!-- CABEÇALHO -->
+  <header class="flex flex-col lg:flex-row lg:items-center justify-between gap-4 pb-6 border-b border-slate-200 dark:border-slate-800/80">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-xl bg-brand-600 flex items-center justify-center text-white font-bold text-lg shadow-sm font-mono">E</div>
+      <div>
+        <h1 class="text-xl font-bold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+          <span id="headerCompany">ZAHAB ENGENHARIA LTDA.</span>
+          <span class="text-xs px-2.5 py-0.5 rounded-full bg-slate-200/70 dark:bg-slate-800 text-slate-600 dark:text-slate-400 font-medium">Controle de Serviços</span>
+        </h1>
+        <p class="text-xs text-slate-500 dark:text-slate-400">Responsável: <span id="headerResponsible">—</span> <span id="headerCrea" class="text-slate-400"></span></p>
+      </div>
+    </div>
+
+    <div class="flex items-center gap-3 flex-wrap">
+      <div class="flex items-center gap-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 px-4 py-2 rounded-2xl shadow-sm">
+        <span class="text-xl">🕒</span>
+        <div class="flex flex-col">
+          <span id="liveDate" class="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Carregando...</span>
+          <span id="liveClock" class="text-base font-black font-mono text-brand-600 dark:text-brand-400">--:--:--</span>
+        </div>
+      </div>
+
+      <button onclick="toggleValuesVisibility()" class="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs shadow-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition" title="Ocultar/exibir valores"><span id="valuesIcon">👁️</span></button>
+      <button onclick="openSettingsModal()" class="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs shadow-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition">⚙️</button>
+      <button onclick="toggleTheme()" class="p-2.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs shadow-sm hover:bg-slate-100 dark:hover:bg-slate-800 transition"><span id="themeIcon">☀️</span></button>
+      <button onclick="exportToExcel()" class="px-3 py-2 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition">Exportar CSV</button>
+    </div>
+  </header>
+
+  <!-- KPI CARDS -->
+  <div class="grid grid-cols-2 sm:grid-cols-5 gap-3.5">
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+      <div><span class="text-[11px] font-medium text-slate-500">Total Serviços</span><h3 id="statTotal" class="text-2xl font-bold text-slate-900 dark:text-white">0</h3></div>
+      <div class="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-500">📋</div>
+    </div>
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+      <div><span class="text-[11px] font-medium text-slate-500">Em Dia</span><h3 id="statOnTime" class="text-2xl font-bold text-brand-500">0</h3></div>
+      <div class="w-9 h-9 rounded-xl bg-brand-50 dark:bg-brand-950/40 flex items-center justify-center text-brand-500">⏱️</div>
+    </div>
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+      <div><span class="text-[11px] font-medium text-slate-500">Atrasados</span><h3 id="statDelayed" class="text-2xl font-bold text-rose-500">0</h3></div>
+      <div class="w-9 h-9 rounded-xl bg-rose-50 dark:bg-rose-950/40 flex items-center justify-center text-rose-500">⚠️</div>
+    </div>
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+      <div><span class="text-[11px] font-medium text-slate-500">Concluídos</span><h3 id="statFinished" class="text-2xl font-bold text-emerald-500">0</h3></div>
+      <div class="w-9 h-9 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 flex items-center justify-center text-emerald-500">✓</div>
+    </div>
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm flex items-center justify-between">
+      <div><span class="text-[11px] font-medium text-slate-500">Valor em Carteira</span><h3 id="statValue" class="text-lg font-bold text-slate-900 dark:text-white">R$ 0</h3></div>
+      <button onclick="toggleValuesVisibility()" class="w-9 h-9 rounded-xl bg-amber-50 dark:bg-amber-950/40 flex items-center justify-center text-amber-500 hover:bg-amber-100 dark:hover:bg-amber-950/70 transition" title="Ocultar/exibir valores"><span id="statValueIcon">💰</span></button>
+    </div>
+  </div>
+
+  <!-- AGENDA & CADASTRO -->
+  <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+
+    <div class="lg:col-span-5 bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+        <div class="flex items-center gap-2"><span class="text-base">📅</span><h2 class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">Agenda Técnica</h2></div>
+        <div class="flex items-center gap-2">
+          <button type="button" onclick="prevMonth()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs text-slate-600 dark:text-slate-300">◀</button>
+          <span id="calendarMonthYear" class="text-xs font-bold text-slate-800 dark:text-slate-200 min-w-[100px] text-center">--</span>
+          <button type="button" onclick="nextMonth()" class="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs text-slate-600 dark:text-slate-300">▶</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-7 gap-1 text-center text-[10px] font-bold text-slate-400">
+        <div>Dom</div><div>Seg</div><div>Ter</div><div>Qua</div><div>Qui</div><div>Sex</div><div>Sáb</div>
+      </div>
+      <div id="calendarDaysGrid" class="grid grid-cols-7 gap-1 text-center text-xs min-h-[180px]"></div>
+      <div class="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
+        <div class="flex items-center justify-between">
+          <span class="text-[11px] font-bold text-slate-500">Prazos e Entregas:</span>
+          <button onclick="resetCalendarFilter()" id="selectedDateLabel" class="text-[11px] font-semibold text-brand-600 dark:text-brand-400 hover:underline">Ver Mês Todo</button>
+        </div>
+        <div id="calendarDeliveriesList" class="space-y-1.5 max-h-[160px] overflow-y-auto pr-1"></div>
+      </div>
+    </div>
+
+    <div class="lg:col-span-7 bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm space-y-4">
+      <div class="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
+        <h2 class="text-xs font-bold tracking-wider uppercase text-slate-700 dark:text-slate-300">Novo Serviço Técnico</h2>
+        <span class="text-[10px] text-slate-400">Cálculo de prazo automático</span>
+      </div>
+
+      <form id="serviceForm" class="space-y-3">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Cliente / Obra</label>
+            <input type="text" id="clientName" placeholder="Ex: Residência Sr. Almeida" required class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Tipo de Serviço</label>
+            <select id="serviceType" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+              <optgroup label="Projetos & Documentação">
+                <option>Projeto Estrutural</option>
+                <option>Projeto Arquitetônico</option>
+                <option>Laudo Técnico</option>
+                <option>Vistoria</option>
+                <option>Acompanhamento de Obra</option>
+                <option>Orçamento / Medição</option>
+                <option>Consultoria</option>
+                <option>ART / Regularização</option>
+              </optgroup>
+              <optgroup label="Elétrica & Instalações">
+                <option>Projeto Elétrico</option>
+                <option>Projeto Hidrossanitário</option>
+                <option>SPDA</option>
+                <option>Rede de Dados</option>
+                <option>Prontuário NR10</option>
+                <option>Aumento de Carga</option>
+                <option>Sistema Fotovoltaico</option>
+                <option>Carregador Veicular</option>
+              </optgroup>
+              <option>Outro</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Responsável Técnico</label>
+            <input type="text" id="assignee" required class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Local / Endereço</label>
+            <input type="text" id="location" placeholder="Ex: Rua das Flores, 123 - Londrina/PR" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-3 gap-2">
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Início</label>
+            <input type="date" id="startDate" required onchange="calcFormByDates()" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-2.5 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Prazo (Dias)</label>
+            <input type="number" id="durationDays" min="1" placeholder="15" required oninput="calcFormByDays()" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-2.5 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Entrega</label>
+            <input type="date" id="endDateCalc" onchange="calcFormByDates()" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-2.5 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Valor (R$)</label>
+            <input type="number" id="value" min="0" step="0.01" placeholder="0,00" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Prioridade</label>
+            <select id="priority" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+              <option>Média</option><option>Alta</option><option>Baixa</option>
+            </select>
+          </div>
+          <div>
+            <label class="block text-[11px] font-medium text-slate-500 mb-1">Status</label>
+            <select id="status" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+              <option value="Em Andamento">Em Andamento</option>
+              <option value="Aguardando Cliente">Aguardando Cliente</option>
+              <option value="Finalizado">Finalizado</option>
+              <option value="Cancelado">Cancelado</option>
+            </select>
+          </div>
+        </div>
+
+        <div>
+          <label class="block text-[11px] font-medium text-slate-500 mb-1">Observação Técnica</label>
+          <input type="text" id="reminderNote" placeholder="Ex: Conferir sondagem de solo antes da concretagem" class="w-full rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-2 bg-slate-50 dark:bg-slate-800 text-xs outline-none focus:ring-1 focus:ring-brand-500">
+        </div>
+
+        <button type="submit" class="w-full bg-slate-900 dark:bg-white hover:bg-slate-800 dark:hover:bg-slate-100 text-white dark:text-slate-900 font-bold py-2.5 rounded-xl text-xs shadow transition">Lançar Serviço na Agenda</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- EDIÇÃO RÁPIDA DE PRAZOS -->
+  <details class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm">
+    <summary class="cursor-pointer list-none p-5 flex items-center justify-between select-none">
+      <span class="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-2">✏️ Edição de Prazos dos Serviços Lançados</span>
+      <span class="text-[10px] text-slate-400 font-normal normal-case">clique para abrir/fechar</span>
+    </summary>
+    <div class="px-5 pb-5 -mt-1 overflow-x-auto">
+      <table class="w-full text-xs text-left">
+        <thead class="text-slate-500 dark:text-slate-400 uppercase text-[10px] tracking-wider">
+          <tr>
+            <th class="p-2.5">Serviço</th>
+            <th class="p-2.5">Início</th>
+            <th class="p-2.5">Prazo (dias)</th>
+            <th class="p-2.5">Entrega</th>
+            <th class="p-2.5 text-center">Ação</th>
+          </tr>
+        </thead>
+        <tbody id="deadlineEditorBody" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+      </table>
+      <p id="deadlineEditorEmpty" class="hidden text-[11px] text-slate-400 py-3">Nenhum serviço lançado ainda.</p>
+    </div>
+  </details>
+
+  <!-- CRONOGRAMA & TABELA -->
+  <div class="space-y-6">
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm">
+      <div class="flex items-center justify-between mb-3">
+        <h2 class="text-xs font-bold tracking-wider uppercase text-slate-700 dark:text-slate-300">Cronograma Visual de Prazos</h2>
+        <select id="chartViewFilter" onchange="render()" class="text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2.5 py-1 outline-none">
+          <option value="active">Em Andamento</option>
+          <option value="all">Ver Todos</option>
+        </select>
+      </div>
+      <div class="relative h-[220px] w-full"><canvas id="milestoneChart"></canvas></div>
+    </div>
+
+    <div class="bg-white dark:bg-slate-900/70 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-sm overflow-hidden">
+      <div class="p-4 border-b border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="flex items-center gap-1.5 flex-wrap">
+          <button onclick="setTabFilter('all')" id="tab_all" class="tab-btn px-3 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-700 shadow-sm">Todos</button>
+          <button onclick="setTabFilter('active')" id="tab_active" class="tab-btn px-3 py-1 rounded-lg text-xs text-slate-500 dark:text-slate-400">Em Andamento</button>
+          <button onclick="setTabFilter('delayed')" id="tab_delayed" class="tab-btn px-3 py-1 rounded-lg text-xs text-slate-500 dark:text-slate-400">Atrasados</button>
+          <button onclick="setTabFilter('waiting')" id="tab_waiting" class="tab-btn px-3 py-1 rounded-lg text-xs text-slate-500 dark:text-slate-400">Aguardando Cliente</button>
+          <button onclick="setTabFilter('finished')" id="tab_finished" class="tab-btn px-3 py-1 rounded-lg text-xs text-slate-500 dark:text-slate-400">Concluídos</button>
+        </div>
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <button onclick="syncAllToGoogle()" class="text-xs px-3 py-1.5 bg-blue-500/10 text-blue-600 rounded-xl font-semibold hover:bg-blue-500/20 whitespace-nowrap">🔄 Sincronizar Tudo</button>
+          <input type="text" id="tableSearch" onkeyup="render()" placeholder="Buscar cliente, tipo ou local..." class="text-xs rounded-xl border border-slate-200 dark:border-slate-700 px-3 py-1.5 bg-slate-50 dark:bg-slate-800 outline-none w-full sm:w-56">
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs text-left">
+          <thead class="bg-slate-50 dark:bg-slate-800/60 text-slate-500 dark:text-slate-400 uppercase text-[10px] tracking-wider">
+            <tr>
+              <th class="p-3.5">Serviço</th>
+              <th class="p-3.5">Prazo</th>
+              <th class="p-3.5">Progresso</th>
+              <th class="p-3.5">Situação</th>
+              <th class="p-3.5">Status</th>
+              <th class="p-3.5 text-center">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="serviceTableBody" class="divide-y divide-slate-100 dark:divide-slate-800"></tbody>
+        </table>
+      </div>
+      <div id="emptyState" class="hidden p-10 text-center text-xs text-slate-400">Nenhum serviço lançado ainda. Cadastre o primeiro acima ☝️</div>
+    </div>
+  </div>
+</div>
+
+<script>
+let services = JSON.parse(localStorage.getItem('services_engenharia') || '[]');
+let settings = JSON.parse(localStorage.getItem('settings_engenharia') || '{}');
+let serviceCounter = parseInt(localStorage.getItem('service_counter_engenharia') || '0');
+let isDarkMode = true;
+let valuesHidden = localStorage.getItem('values_hidden_engenharia') === 'true';
+let activeTab = 'all';
+let milestoneChart = null;
+let calendarDate = new Date();
+let selectedCalendarDay = null;
+
+// ---------- CONFIGURAÇÕES ----------
+function applySettingsDefaults() {
+  if (!settings.companyName) settings.companyName = 'ZAHAB ENGENHARIA LTDA.';
+  if (!settings.responsibleName) settings.responsibleName = 'Eng° Carlos Alberto de Oliveira';
+  if (!settings.crea) settings.crea = '';
+  if (!settings.email) settings.email = '';
+  if (!settings.googleClientId) settings.googleClientId = '';
+  if (!settings.googleApiKey) settings.googleApiKey = '';
+}
+function paintHeaderFromSettings() {
+  document.getElementById('headerCompany').innerText = settings.companyName;
+  document.getElementById('headerResponsible').innerText = settings.responsibleName;
+  document.getElementById('headerCrea').innerText = settings.crea ? `• ${settings.crea}` : '';
+  document.getElementById('assignee').value = settings.responsibleName;
+  document.title = `${settings.companyName} - Controle de Serviços`;
+}
+function openSettingsModal() {
+  document.getElementById('settCompany').value = settings.companyName;
+  document.getElementById('settResponsible').value = settings.responsibleName;
+  document.getElementById('settCrea').value = settings.crea;
+  document.getElementById('settEmail').value = settings.email;
+  document.getElementById('settGoogleClientId').value = settings.googleClientId;
+  document.getElementById('settGoogleApiKey').value = settings.googleApiKey;
+  updateGoogleStatus();
+  openModal('settingsModal');
+}
+function saveSettings() {
+  settings.companyName = document.getElementById('settCompany').value.trim() || 'Escritório de Engenharia';
+  settings.responsibleName = document.getElementById('settResponsible').value.trim() || 'Eng° Responsável';
+  settings.crea = document.getElementById('settCrea').value.trim();
+  settings.email = document.getElementById('settEmail').value.trim();
+  const newClientId = document.getElementById('settGoogleClientId').value.trim();
+  const newApiKey = document.getElementById('settGoogleApiKey').value.trim();
+  const credsChanged = newClientId !== settings.googleClientId || newApiKey !== settings.googleApiKey;
+  settings.googleClientId = newClientId;
+  settings.googleApiKey = newApiKey;
+  localStorage.setItem('settings_engenharia', JSON.stringify(settings));
+  paintHeaderFromSettings();
+  if (credsChanged) { googleConnected = false; initGoogleClients(); }
+  closeModal('settingsModal');
+  showToast('Dados do escritório atualizados!');
+}
+
+// ---------- BACKUP / RESTORE ----------
+function exportJSON() {
+  const payload = { services, settings, exportedAt: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'backup_servicos_engenharia.json'; a.click();
+}
+function importJSON(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (Array.isArray(data.services)) {
+        services = data.services;
+        if (data.settings) settings = data.settings;
+        localStorage.setItem('services_engenharia', JSON.stringify(services));
+        localStorage.setItem('settings_engenharia', JSON.stringify(settings));
+        applySettingsDefaults();
+        paintHeaderFromSettings();
+        render();
+        closeModal('settingsModal');
+        showToast('Backup restaurado com sucesso!');
+      } else { showToast('Arquivo inválido.'); }
+    } catch (err) { showToast('Erro ao ler o arquivo.'); }
+  };
+  reader.readAsText(file);
+}
+
+// ---------- MODAIS GENÉRICOS ----------
+function openModal(id) { document.getElementById(id).classList.remove('hidden'); document.getElementById(id).classList.add('flex'); }
+function closeModal(id) { document.getElementById(id).classList.add('hidden'); document.getElementById(id).classList.remove('flex'); }
+
+// ---------- RELÓGIO ----------
+function startLiveClock() {
+  const dias = ['Domingo','Segunda-feira','Terça-feira','Quarta-feira','Quinta-feira','Sexta-feira','Sábado'];
+  function tick() {
+    const now = new Date();
+    document.getElementById('liveClock').innerText = now.toLocaleTimeString('pt-BR');
+    document.getElementById('liveDate').innerText = `${dias[now.getDay()]}, ${now.toLocaleDateString('pt-BR')}`;
+  }
+  tick(); setInterval(tick, 1000);
+}
+
+// ---------- CÁLCULOS ----------
+function calculateMetrics(startDate, durationDays, status) {
+  const s = new Date(startDate + 'T00:00:00');
+  const e = new Date(s);
+  e.setDate(e.getDate() + parseInt(durationDays || 0));
+  const endDateStr = e.toISOString().split('T')[0];
+  const today = new Date(); today.setHours(0,0,0,0);
+  const daysRemaining = Math.ceil((e - today) / (1000*60*60*24));
+  const isOpen = status === 'Em Andamento' || status === 'Aguardando Cliente';
+  return { endDateStr, daysRemaining, isDelayed: isOpen && daysRemaining < 0 };
+}
+function formatDate(dateStr) {
+  if (!dateStr) return '--';
+  const [y,m,d] = dateStr.split('-');
+  return `${d}/${m}/${y}`;
+}
+function formatCurrency(v) {
+  if (valuesHidden) return 'R$ ••••••';
+  return (parseFloat(v)||0).toLocaleString('pt-BR', { style:'currency', currency:'BRL' });
+}
+function toggleValuesVisibility() {
+  valuesHidden = !valuesHidden;
+  localStorage.setItem('values_hidden_engenharia', valuesHidden);
+  const icon = valuesHidden ? '🙈' : '👁️';
+  document.getElementById('valuesIcon').innerText = icon;
+  render();
+}
+function calcFormByDays() {
+  const start = document.getElementById('startDate').value;
+  const days = parseInt(document.getElementById('durationDays').value);
+  if (start && days > 0) {
+    const s = new Date(start + 'T00:00:00'); s.setDate(s.getDate() + days);
+    document.getElementById('endDateCalc').value = s.toISOString().split('T')[0];
+  }
+}
+function calcFormByDates() {
+  const start = document.getElementById('startDate').value;
+  const end = document.getElementById('endDateCalc').value;
+  if (start && end) {
+    const diff = Math.ceil((new Date(end+'T00:00:00') - new Date(start+'T00:00:00')) / (1000*60*60*24));
+    if (diff > 0) document.getElementById('durationDays').value = diff;
+  }
+}
+
+// ---------- FORMULÁRIO: NOVO SERVIÇO ----------
+document.getElementById('serviceForm').addEventListener('submit', (e) => {
+  e.preventDefault();
+  serviceCounter++;
+  const code = `OS-${new Date().getFullYear()}-${String(serviceCounter).padStart(4,'0')}`;
+  services.push({
+    code,
+    clientName: document.getElementById('clientName').value.trim(),
+    serviceType: document.getElementById('serviceType').value,
+    assignee: document.getElementById('assignee').value.trim(),
+    location: document.getElementById('location').value.trim(),
+    startDate: document.getElementById('startDate').value,
+    durationDays: document.getElementById('durationDays').value,
+    value: document.getElementById('value').value || 0,
+    priority: document.getElementById('priority').value,
+    reminderNote: document.getElementById('reminderNote').value.trim(),
+    status: document.getElementById('status').value,
+    progress: document.getElementById('status').value === 'Finalizado' ? 100 : 0,
+    history: [{ date: new Date().toISOString(), text: 'Serviço lançado no sistema.' }]
+  });
+  localStorage.setItem('service_counter_engenharia', serviceCounter);
+  document.getElementById('serviceForm').reset();
+  document.getElementById('assignee').value = settings.responsibleName;
+  document.getElementById('priority').value = 'Média';
+  saveStorage(); render();
+  showToast(`Serviço ${code} lançado com sucesso!`);
+});
+
+function saveStorage() { localStorage.setItem('services_engenharia', JSON.stringify(services)); }
+
+// ---------- PRIORIDADE / BADGES ----------
+function priorityBadge(p) {
+  const map = {
+    'Alta': 'bg-rose-500/10 text-rose-600 border-rose-500/20',
+    'Média': 'bg-amber-500/10 text-amber-600 border-amber-500/20',
+    'Baixa': 'bg-sky-500/10 text-sky-600 border-sky-500/20'
+  };
+  return `<span class="text-[10px] font-bold px-2 py-0.5 rounded-full border ${map[p]||map['Média']}">${p}</span>`;
+}
+function priorityBorder(p) {
+  return p === 'Alta' ? 'border-l-4 border-l-rose-500' : p === 'Baixa' ? 'border-l-4 border-l-sky-400' : 'border-l-4 border-l-amber-400';
+}
+
+// ---------- TABELA / RENDER ----------
+function setTabFilter(tab) {
+  activeTab = tab;
+  ['all','active','delayed','waiting','finished'].forEach(t => {
+    document.getElementById(`tab_${t}`).className = t === tab
+      ? "tab-btn px-3 py-1 rounded-lg text-xs font-semibold bg-white dark:bg-slate-700 shadow-sm"
+      : "tab-btn px-3 py-1 rounded-lg text-xs text-slate-500 dark:text-slate-400";
+  });
+  render();
+}
+
+function render() {
+  const tbody = document.getElementById('serviceTableBody');
+  tbody.innerHTML = '';
+  let total = services.length, onTime = 0, delayed = 0, finished = 0, totalValue = 0;
+  const search = (document.getElementById('tableSearch')?.value || '').toLowerCase();
+
+  services.forEach(s => {
+    if (s.status === 'Finalizado') finished++;
+    else if (s.status !== 'Cancelado') {
+      const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+      if (m.isDelayed) delayed++; else onTime++;
+      totalValue += parseFloat(s.value) || 0;
+    }
+  });
+
+  document.getElementById('statTotal').innerText = total;
+  document.getElementById('statFinished').innerText = finished;
+  document.getElementById('statOnTime').innerText = onTime;
+  document.getElementById('statDelayed').innerText = delayed;
+  document.getElementById('statValue').innerText = formatCurrency(totalValue);
+
+  const filtered = services.filter(s => {
+    const haystack = `${s.clientName} ${s.serviceType} ${s.location}`.toLowerCase();
+    if (!haystack.includes(search)) return false;
+    const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+    if (activeTab === 'active') return s.status === 'Em Andamento';
+    if (activeTab === 'delayed') return m.isDelayed;
+    if (activeTab === 'waiting') return s.status === 'Aguardando Cliente';
+    if (activeTab === 'finished') return s.status === 'Finalizado';
+    return true;
+  });
+
+  document.getElementById('emptyState').classList.toggle('hidden', services.length > 0);
+
+  filtered.forEach((svc) => {
+    const realIndex = services.indexOf(svc);
+    const m = calculateMetrics(svc.startDate, svc.durationDays, svc.status);
+    let situacao = '';
+    if (svc.status === 'Finalizado') situacao = `<span class="text-emerald-500 font-bold">✓ Concluído</span>`;
+    else if (svc.status === 'Cancelado') situacao = `<span class="text-slate-400 font-bold">Cancelado</span>`;
+    else if (m.isDelayed) situacao = `<span class="text-rose-500 font-bold animate-pulse">⚠️ ${Math.abs(m.daysRemaining)}d atrasado</span>`;
+    else situacao = `<span class="text-brand-500 font-semibold">${m.daysRemaining} dias restantes</span>`;
+
+    const progress = svc.progress || 0;
+    const barColor = svc.status === 'Finalizado' ? 'bg-emerald-500' : m.isDelayed ? 'bg-rose-500' : 'bg-brand-500';
+
+    tbody.innerHTML += `
+      <tr class="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition ${priorityBorder(svc.priority)}">
+        <td class="p-3.5">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="font-mono text-[10px] text-slate-400">${svc.code||''}</span>
+            ${priorityBadge(svc.priority)}
+          </div>
+          <div class="font-bold text-slate-800 dark:text-slate-100">${svc.clientName}</div>
+          <div class="text-[11px] text-slate-500">${svc.serviceType} ${svc.location ? '· ' + svc.location : ''}</div>
+          <div class="text-[11px] text-slate-400">${svc.reminderNote || 'Sem observações adicionais'}</div>
+        </td>
+        <td class="p-3.5 text-slate-600 dark:text-slate-400 whitespace-nowrap">
+          ${formatDate(svc.startDate)} → <strong class="text-slate-800 dark:text-slate-200">${formatDate(m.endDateStr)}</strong><br>
+          <span class="text-[10px] text-slate-400">${svc.durationDays}d · ${formatCurrency(svc.value)}</span>
+        </td>
+        <td class="p-3.5 w-32">
+          <div class="w-full h-2 rounded-full progress-track overflow-hidden">
+            <div class="h-full ${barColor}" style="width:${progress}%"></div>
+          </div>
+          <span class="text-[10px] text-slate-400">${progress}%</span>
+        </td>
+        <td class="p-3.5">${situacao}</td>
+        <td class="p-3.5">
+          <select onchange="updateStatus(${realIndex}, this.value)" class="text-[11px] rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 p-1 outline-none">
+            <option value="Em Andamento" ${svc.status==='Em Andamento'?'selected':''}>Em Andamento</option>
+            <option value="Aguardando Cliente" ${svc.status==='Aguardando Cliente'?'selected':''}>Aguardando Cliente</option>
+            <option value="Finalizado" ${svc.status==='Finalizado'?'selected':''}>Finalizado</option>
+            <option value="Cancelado" ${svc.status==='Cancelado'?'selected':''}>Cancelado</option>
+          </select>
+        </td>
+        <td class="p-3.5 text-center whitespace-nowrap space-x-1">
+          <button onclick="openProgressModal(${realIndex})" class="px-2 py-1 text-xs bg-brand-500/10 text-brand-600 rounded-lg hover:bg-brand-500/20 font-semibold">📈 Progresso</button>
+          <button onclick="openDeadlineModal(${realIndex})" class="px-2 py-1 text-xs bg-amber-500/10 text-amber-600 rounded-lg hover:bg-amber-500/20 font-semibold">⏱️ Prazo</button>
+          <button onclick="${googleConnected ? `syncServiceToGoogle(${realIndex})` : `addToGoogleCalendar(${realIndex})`}" class="px-2 py-1 text-xs bg-blue-500/10 text-blue-500 rounded-lg hover:bg-blue-500/20 font-semibold">${googleConnected ? '🔄 Sincronizar' : '📅 Agenda'}</button>
+          <button onclick="composeGmail(${realIndex})" class="px-2 py-1 text-xs bg-red-500/10 text-red-500 rounded-lg hover:bg-red-500/20 font-semibold">✉️ E-mail</button>
+          <button onclick="printReport(${realIndex})" class="px-2 py-1 text-xs bg-slate-500/10 text-slate-500 rounded-lg hover:bg-slate-500/20 font-semibold">🖨️ Relatório</button>
+          <button onclick="deleteService(${realIndex})" class="px-2 py-1 text-xs text-slate-400 hover:text-rose-500 font-semibold">Excluir</button>
+        </td>
+      </tr>
+    `;
+  });
+
+  renderCalendar();
+  updateChart();
+  renderDeadlineEditor();
+}
+
+function updateStatus(idx, s) {
+  services[idx].status = s;
+  if (s === 'Finalizado') services[idx].progress = 100;
+  services[idx].history = services[idx].history || [];
+  services[idx].history.unshift({ date: new Date().toISOString(), text: `Status alterado para "${s}".` });
+  saveStorage(); render();
+}
+function deleteService(idx) {
+  if (confirm('Deseja realmente remover este serviço técnico?')) {
+    services.splice(idx, 1); saveStorage(); render();
+  }
+}
+
+// ---------- EDIÇÃO RÁPIDA DE PRAZOS ----------
+function renderDeadlineEditor() {
+  const tbody = document.getElementById('deadlineEditorBody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+  const editable = services.filter(s => s.status !== 'Cancelado');
+  document.getElementById('deadlineEditorEmpty').classList.toggle('hidden', editable.length > 0);
+
+  editable.forEach(svc => {
+    const idx = services.indexOf(svc);
+    const m = calculateMetrics(svc.startDate, svc.durationDays, svc.status);
+    tbody.innerHTML += `
+      <tr>
+        <td class="p-2.5">
+          <span class="font-mono text-[10px] text-slate-400">${svc.code||''}</span><br>
+          <span class="font-semibold text-slate-800 dark:text-slate-100">${svc.clientName}</span>
+        </td>
+        <td class="p-2.5"><input type="date" id="editStart_${idx}" value="${svc.startDate}" onchange="syncInlineByDates(${idx})" class="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 bg-slate-50 dark:bg-slate-800 text-xs outline-none"></td>
+        <td class="p-2.5"><input type="number" min="1" id="editDuration_${idx}" value="${svc.durationDays}" oninput="syncInlineByDays(${idx})" class="w-20 rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 bg-slate-50 dark:bg-slate-800 text-xs outline-none"></td>
+        <td class="p-2.5"><input type="date" id="editEnd_${idx}" value="${m.endDateStr}" onchange="syncInlineByEnd(${idx})" class="rounded-lg border border-slate-200 dark:border-slate-700 px-2 py-1.5 bg-slate-50 dark:bg-slate-800 text-xs outline-none"></td>
+        <td class="p-2.5 text-center"><button onclick="saveInlineDeadline(${idx})" class="px-3 py-1.5 text-[11px] bg-brand-600 hover:bg-brand-500 text-white font-bold rounded-lg shadow transition">Salvar</button></td>
+      </tr>`;
+  });
+}
+function syncInlineByDays(idx) {
+  const start = document.getElementById(`editStart_${idx}`).value;
+  const days = parseInt(document.getElementById(`editDuration_${idx}`).value);
+  if (start && days > 0) {
+    const s = new Date(start + 'T00:00:00'); s.setDate(s.getDate() + days);
+    document.getElementById(`editEnd_${idx}`).value = s.toISOString().split('T')[0];
+  }
+}
+function syncInlineByEnd(idx) {
+  const start = document.getElementById(`editStart_${idx}`).value;
+  const end = document.getElementById(`editEnd_${idx}`).value;
+  if (start && end) {
+    const diff = Math.ceil((new Date(end+'T00:00:00') - new Date(start+'T00:00:00')) / (1000*60*60*24));
+    if (diff > 0) document.getElementById(`editDuration_${idx}`).value = diff;
+  }
+}
+function syncInlineByDates(idx) { syncInlineByEnd(idx); }
+function saveInlineDeadline(idx) {
+  const start = document.getElementById(`editStart_${idx}`).value;
+  const days = document.getElementById(`editDuration_${idx}`).value;
+  if (!start || !days) { showToast('Preencha data e prazo.'); return; }
+  services[idx].startDate = start;
+  services[idx].durationDays = days;
+  services[idx].history = services[idx].history || [];
+  services[idx].history.unshift({ date: new Date().toISOString(), text: `Prazo reajustado (edição rápida): início ${formatDate(start)}, ${days} dias.` });
+  saveStorage(); render();
+  showToast('Prazo atualizado com sucesso!');
+}
+
+// ---------- MODAL: PRAZO ----------
+function openDeadlineModal(idx) {
+  const s = services[idx];
+  document.getElementById('modalServiceIndex').value = idx;
+  document.getElementById('modalServiceTitle').innerText = `${s.code} · ${s.clientName}`;
+  document.getElementById('modalStartDate').value = s.startDate;
+  document.getElementById('modalDurationDays').value = s.durationDays;
+  const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+  document.getElementById('modalEndDate').value = m.endDateStr;
+  openModal('deadlineModal');
+}
+function calcModalByDays() {
+  const start = document.getElementById('modalStartDate').value;
+  const days = parseInt(document.getElementById('modalDurationDays').value);
+  if (start && days > 0) {
+    const s = new Date(start+'T00:00:00'); s.setDate(s.getDate()+days);
+    document.getElementById('modalEndDate').value = s.toISOString().split('T')[0];
+  }
+}
+function calcModalByDates() {
+  const start = document.getElementById('modalStartDate').value;
+  const end = document.getElementById('modalEndDate').value;
+  if (start && end) {
+    const diff = Math.ceil((new Date(end+'T00:00:00') - new Date(start+'T00:00:00')) / (1000*60*60*24));
+    if (diff > 0) document.getElementById('modalDurationDays').value = diff;
+  }
+}
+function saveDeadlineModal() {
+  const idx = document.getElementById('modalServiceIndex').value;
+  const start = document.getElementById('modalStartDate').value;
+  const days = document.getElementById('modalDurationDays').value;
+  if (!start || !days) { showToast('Preencha data e prazo.'); return; }
+  services[idx].startDate = start;
+  services[idx].durationDays = days;
+  services[idx].history = services[idx].history || [];
+  services[idx].history.unshift({ date: new Date().toISOString(), text: `Prazo reajustado: início ${formatDate(start)}, ${days} dias.` });
+  saveStorage(); closeModal('deadlineModal'); render();
+  showToast('Prazo atualizado com sucesso!');
+}
+
+// ---------- MODAL: PROGRESSO ----------
+function openProgressModal(idx) {
+  const s = services[idx];
+  document.getElementById('progressServiceIndex').value = idx;
+  document.getElementById('progressServiceTitle').innerText = `${s.code} · ${s.clientName}`;
+  document.getElementById('progressRange').value = s.progress || 0;
+  document.getElementById('progressValueLabel').innerText = (s.progress || 0) + '%';
+  document.getElementById('progressNote').value = '';
+  const hist = (s.history || []).slice(0, 6).map(h =>
+    `<div class="border-l-2 border-slate-200 dark:border-slate-700 pl-2"><span class="text-slate-400">${new Date(h.date).toLocaleDateString('pt-BR')}:</span> ${h.text}</div>`
+  ).join('');
+  document.getElementById('historyList').innerHTML = hist || '<span class="text-slate-400">Sem histórico ainda.</span>';
+  openModal('progressModal');
+}
+function saveProgressModal() {
+  const idx = document.getElementById('progressServiceIndex').value;
+  const progress = parseInt(document.getElementById('progressRange').value);
+  const note = document.getElementById('progressNote').value.trim();
+  services[idx].progress = progress;
+  services[idx].history = services[idx].history || [];
+  services[idx].history.unshift({ date: new Date().toISOString(), text: note ? `${progress}% — ${note}` : `Progresso atualizado para ${progress}%.` });
+  saveStorage(); closeModal('progressModal'); render();
+  showToast('Apontamento registrado!');
+}
+
+// ---------- GOOGLE CALENDAR / GMAIL ----------
+let gapiInited = false, gisInited = false, tokenClient = null, googleConnected = false;
+
+function gapiLoaded() { gapi.load('client', initGapiClient); }
+async function initGapiClient() {
+  if (!settings.googleApiKey) return;
+  try {
+    await gapi.client.init({ apiKey: settings.googleApiKey, discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'] });
+    gapiInited = true;
+  } catch (err) { console.error('Erro ao iniciar gapi:', err); }
+}
+function gisLoaded() {
+  if (!settings.googleClientId) { gisInited = true; return; }
+  tokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: settings.googleClientId,
+    scope: 'https://www.googleapis.com/auth/calendar.events',
+    callback: ''
+  });
+  gisInited = true;
+}
+function initGoogleClients() {
+  if (window.gapi) initGapiClient();
+  if (window.google && google.accounts) gisLoaded();
+}
+function updateGoogleStatus() {
+  const el = document.getElementById('googleStatus');
+  if (!el) return;
+  if (googleConnected) { el.innerText = 'Conectado'; el.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600'; }
+  else { el.innerText = 'Desconectado'; el.className = 'text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500'; }
+}
+function connectGoogle() {
+  if (!settings.googleClientId || !settings.googleApiKey) { showToast('Salve o Client ID e a API Key primeiro.'); return; }
+  if (!gapiInited || !gisInited || !tokenClient) { showToast('Carregando bibliotecas do Google, aguarde e tente novamente...'); initGoogleClients(); return; }
+  tokenClient.callback = (resp) => {
+    if (resp.error) { showToast('Falha na autenticação com o Google.'); return; }
+    googleConnected = true;
+    updateGoogleStatus();
+    render();
+    showToast('Conectado à Google Agenda!');
+  };
+  tokenClient.requestAccessToken({ prompt: gapi.client.getToken() === null ? 'consent' : '' });
+}
+function addOneDay(dateStr) {
+  const d = new Date(dateStr + 'T00:00:00');
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().split('T')[0];
+}
+async function syncServiceToGoogle(idx) {
+  if (!googleConnected) { showToast('Conecte-se à Google Agenda em Configurações.'); openSettingsModal(); return; }
+  const s = services[idx];
+  const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+  const event = {
+    summary: `[${settings.companyName}] ${s.serviceType}: ${s.clientName}`,
+    description: `Código: ${s.code}\nResponsável: ${s.assignee}\nLocal: ${s.location||'-'}\nProgresso: ${s.progress||0}%\nObservação: ${s.reminderNote||'Sem notas'}`,
+    start: { date: s.startDate },
+    end: { date: addOneDay(m.endDateStr) }
+  };
+  try {
+    let resp;
+    if (s.googleEventId) {
+      resp = await gapi.client.calendar.events.update({ calendarId: 'primary', eventId: s.googleEventId, resource: event });
+    } else {
+      resp = await gapi.client.calendar.events.insert({ calendarId: 'primary', resource: event });
+      s.googleEventId = resp.result.id;
+      saveStorage();
+    }
+    showToast(`Sincronizado: ${s.clientName}`);
+  } catch (err) {
+    console.error(err);
+    showToast('Erro ao sincronizar com o Google. Verifique as credenciais.');
+  }
+}
+async function syncAllToGoogle() {
+  if (!googleConnected) { showToast('Conecte-se à Google Agenda em Configurações.'); openSettingsModal(); return; }
+  const active = services.filter(s => s.status !== 'Cancelado');
+  if (active.length === 0) { showToast('Nenhum serviço para sincronizar.'); return; }
+  showToast(`Sincronizando ${active.length} serviço(s)...`);
+  for (const s of active) { await syncServiceToGoogle(services.indexOf(s)); }
+  showToast('Sincronização com a Google Agenda concluída!');
+}
+function addToGoogleCalendar(idx) {
+  const s = services[idx];
+  const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+  const startClean = s.startDate.replace(/-/g,'');
+  const endClean = m.endDateStr.replace(/-/g,'');
+  const title = encodeURIComponent(`[${settings.companyName}] ${s.serviceType}: ${s.clientName}`);
+  const details = encodeURIComponent(`Código: ${s.code}\nResponsável: ${s.assignee}\nLocal: ${s.location||'-'}\nObservação: ${s.reminderNote||'Sem notas'}`);
+  window.open(`https://calendar.google.com/calendar/render?action=TEMPLATE&text=${title}&dates=${startClean}/${endClean}&details=${details}`, '_blank');
+}
+function composeGmail(idx) {
+  const s = services[idx];
+  const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+  const subject = encodeURIComponent(`[${settings.companyName}] Status do serviço ${s.code} - ${s.clientName}`);
+  const body = encodeURIComponent(`Olá,\n\nServiço: ${s.serviceType} (${s.code})\nCliente/Obra: ${s.clientName}\nPrevisão de Entrega: ${formatDate(m.endDateStr)}\nProgresso: ${s.progress||0}%\nDias Restantes: ${m.daysRemaining}\nObs: ${s.reminderNote||'Nenhuma'}\n\nAtenciosamente,\n${settings.responsibleName}`);
+  window.open(`https://mail.google.com/mail/?view=cm&fs=1&to=${settings.email}&su=${subject}&body=${body}`, '_blank');
+}
+
+// ---------- RELATÓRIO IMPRIMÍVEL ----------
+function printReport(idx) {
+  const s = services[idx];
+  const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+  const hist = (s.history||[]).map(h => `<li>${new Date(h.date).toLocaleString('pt-BR')} — ${h.text}</li>`).join('');
+  document.getElementById('printArea').innerHTML = `
+    <div style="font-family: sans-serif; color:#111;">
+      <h2>${settings.companyName}</h2>
+      <p>Responsável: ${settings.responsibleName} ${settings.crea ? '(' + settings.crea + ')' : ''}</p>
+      <hr>
+      <h3>Relatório de Serviço — ${s.code}</h3>
+      <p><strong>Cliente/Obra:</strong> ${s.clientName}<br>
+      <strong>Tipo:</strong> ${s.serviceType}<br>
+      <strong>Local:</strong> ${s.location||'-'}<br>
+      <strong>Prioridade:</strong> ${s.priority}<br>
+      <strong>Início:</strong> ${formatDate(s.startDate)} &nbsp; <strong>Entrega Prevista:</strong> ${formatDate(m.endDateStr)}<br>
+      <strong>Valor:</strong> ${formatCurrency(s.value)}<br>
+      <strong>Progresso Físico:</strong> ${s.progress||0}%<br>
+      <strong>Status:</strong> ${s.status}<br>
+      <strong>Observação:</strong> ${s.reminderNote||'-'}</p>
+      <h4>Histórico de Apontamentos</h4>
+      <ul>${hist || '<li>Sem registros.</li>'}</ul>
+    </div>
+  `;
+  document.getElementById('printArea').classList.remove('hidden');
+  window.print();
+  setTimeout(() => document.getElementById('printArea').classList.add('hidden'), 500);
+}
+
+// ---------- EXPORTAR CSV ----------
+function exportToExcel() {
+  let csv = "sep=;\nCodigo;Cliente;Tipo;Responsavel;Local;Inicio;Prazo;Valor;Prioridade;Progresso;Status\n";
+  services.forEach(s => {
+    csv += `"${s.code}";"${s.clientName}";"${s.serviceType}";"${s.assignee}";"${s.location||''}";"${s.startDate}";"${s.durationDays}";"${s.value}";"${s.priority}";"${s.progress||0}%";"${s.status}"\n`;
+  });
+  const blob = new Blob(["\ufeff" + csv], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'Controle_Servicos_Engenharia.csv'; a.click();
+}
+
+// ---------- GRÁFICO GANTT ----------
+function updateChart() {
+  const canvas = document.getElementById('milestoneChart');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const viewFilter = document.getElementById('chartViewFilter')?.value || 'active';
+  const list = viewFilter === 'all' ? services : services.filter(s => s.status === 'Em Andamento' || s.status === 'Aguardando Cliente');
+
+  const datasets = list.map((s, i) => {
+    const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+    const sTs = new Date(s.startDate + 'T00:00:00').getTime();
+    const eTs = new Date(m.endDateStr + 'T00:00:00').getTime();
+    const color = s.status === 'Finalizado' ? '#10b981' : m.isDelayed ? '#f43f5e' : '#0891b2';
+    return { label: s.clientName, data: [{x:sTs,y:i},{x:eTs,y:i}], borderColor: color, borderWidth: 4, pointBackgroundColor: color, pointRadius: 5 };
+  });
+
+  if (milestoneChart) milestoneChart.destroy();
+  const isDark = document.documentElement.classList.contains('dark');
+  const textColor = isDark ? '#94a3b8' : '#64748b';
+
+  milestoneChart = new Chart(ctx, {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { type:'time', time:{unit:'day', displayFormats:{day:'dd/MM'}}, grid:{color: isDark?'#1e293b':'#f1f5f9'}, ticks:{color:textColor} },
+        y: { min:-0.5, max:list.length-0.5, ticks:{ callback:(idx)=>list[idx]?.clientName.substring(0,16)||'', color:textColor }, grid:{display:false} }
+      }
+    }
+  });
+}
+
+// ---------- CALENDÁRIO ----------
+function prevMonth(){ calendarDate.setMonth(calendarDate.getMonth()-1); selectedCalendarDay=null; renderCalendar(); }
+function nextMonth(){ calendarDate.setMonth(calendarDate.getMonth()+1); selectedCalendarDay=null; renderCalendar(); }
+function resetCalendarFilter(){ selectedCalendarDay=null; renderCalendar(); }
+
+function renderCalendar() {
+  const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const year = calendarDate.getFullYear(), month = calendarDate.getMonth();
+  document.getElementById('calendarMonthYear').innerText = `${meses[month]} ${year}`;
+
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month+1, 0).getDate();
+  const grid = document.getElementById('calendarDaysGrid');
+  grid.innerHTML = '';
+
+  const deliveriesByDay = {};
+  services.forEach(s => {
+    if (s.status === 'Cancelado') return;
+    const m = calculateMetrics(s.startDate, s.durationDays, s.status);
+    const d = new Date(m.endDateStr + 'T00:00:00');
+    if (d.getFullYear() === year && d.getMonth() === month) {
+      const day = d.getDate();
+      deliveriesByDay[day] = deliveriesByDay[day] || [];
+      deliveriesByDay[day].push(s);
+    }
+  });
+
+  for (let i=0; i<firstDay; i++) grid.innerHTML += `<div></div>`;
+  const todayStr = new Date().toDateString();
+  for (let d=1; d<=daysInMonth; d++) {
+    const isToday = new Date(year,month,d).toDateString() === todayStr;
+    const hasEvent = !!deliveriesByDay[d];
+    const isSelected = selectedCalendarDay === d;
+    grid.innerHTML += `
+      <button onclick="selectCalendarDay(${d})" class="relative aspect-square rounded-lg flex items-center justify-center
+        ${isSelected ? 'bg-brand-600 text-white font-bold' : isToday ? 'bg-brand-100 dark:bg-brand-950/50 text-brand-600 dark:text-brand-400 font-bold' : 'hover:bg-slate-100 dark:hover:bg-slate-800'}">
+        ${d}
+        ${hasEvent && !isSelected ? '<span class="absolute bottom-0.5 w-1 h-1 rounded-full bg-rose-500"></span>' : ''}
+      </button>`;
+  }
+
+  const label = document.getElementById('selectedDateLabel');
+  label.innerText = selectedCalendarDay ? `${selectedCalendarDay}/${month+1} - Ver Mês Todo` : 'Ver Mês Todo';
+
+  const list = document.getElementById('calendarDeliveriesList');
+  const daysToShow = selectedCalendarDay ? [selectedCalendarDay] : Object.keys(deliveriesByDay).map(Number).sort((a,b)=>a-b);
+  list.innerHTML = '';
+  let any = false;
+  daysToShow.forEach(day => {
+    (deliveriesByDay[day]||[]).forEach(s => {
+      any = true;
+      list.innerHTML += `<div class="text-[11px] bg-slate-50 dark:bg-slate-800/60 rounded-lg px-2.5 py-1.5 flex items-center justify-between">
+        <span><strong>${day}/${month+1}</strong> · ${s.clientName}</span>
+        ${priorityBadge(s.priority)}
+      </div>`;
+    });
+  });
+  if (!any) list.innerHTML = `<span class="text-[11px] text-slate-400">Nenhuma entrega prevista.</span>`;
+}
+function selectCalendarDay(d) { selectedCalendarDay = (selectedCalendarDay === d) ? null : d; renderCalendar(); }
+
+// ---------- TEMA / TOAST ----------
+function toggleTheme() {
+  isDarkMode = !isDarkMode;
+  document.documentElement.classList.toggle('dark', isDarkMode);
+  document.getElementById('themeIcon').innerText = isDarkMode ? '☀️' : '🌙';
+  render();
+}
+function showToast(msg) {
+  const container = document.getElementById('toastContainer');
+  const t = document.createElement('div');
+  t.className = `bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-3.5 py-2 rounded-xl shadow-lg text-xs font-semibold transition-all`;
+  t.innerText = msg;
+  container.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+// ---------- INICIALIZAÇÃO ----------
+window.addEventListener('DOMContentLoaded', () => {
+  applySettingsDefaults();
+  paintHeaderFromSettings();
+  document.getElementById('valuesIcon').innerText = valuesHidden ? '🙈' : '👁️';
+  startLiveClock();
+  render();
+});
+</script>
+
+<script async defer src="https://apis.google.com/js/api.js" onload="gapiLoaded()"></script>
+<script async defer src="https://accounts.google.com/gsi/client" onload="gisLoaded()"></script>
+</body>
+</html>
