@@ -137,7 +137,7 @@
 
       <div class="pt-3 border-t border-slate-100 dark:border-slate-800 space-y-2">
         <div class="flex items-center justify-between">
-          <span class="font-bold text-slate-700 dark:text-slate-300">🔗 Sincronização com Google Agenda</span>
+          <span class="font-bold text-slate-700 dark:text-slate-300">☁️ Sincronização com Google (Agenda + Nuvem)</span>
           <span id="googleStatus" class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-slate-200 dark:bg-slate-800 text-slate-500">Desconectado</span>
         </div>
         <div>
@@ -148,8 +148,12 @@
           <label class="block font-medium text-slate-500 mb-1">Google API Key</label>
           <input type="text" id="settGoogleApiKey" placeholder="AIza..." class="w-full rounded-xl border border-slate-300 dark:border-slate-700 p-2.5 bg-slate-50 dark:bg-slate-800 outline-none font-mono text-[11px]">
         </div>
-        <p class="text-[10px] text-slate-400">Salve as credenciais antes de conectar. A página precisa estar hospedada em http/https (não funciona em arquivo local).</p>
-        <button type="button" onclick="connectGoogle()" class="w-full px-3 py-2 text-[11px] bg-blue-500/10 text-blue-600 rounded-xl font-semibold hover:bg-blue-500/20">Conectar com Google Agenda</button>
+        <p class="text-[10px] text-slate-400">Salve as credenciais antes de conectar. Ao conectar, seus serviços passam a ser salvos também numa pasta privada da sua conta Google Drive — assim funcionam iguais em qualquer aparelho logado com a mesma conta. A página precisa estar hospedada em http/https (não funciona em arquivo local).</p>
+        <button type="button" onclick="connectGoogle()" class="w-full px-3 py-2 text-[11px] bg-blue-500/10 text-blue-600 rounded-xl font-semibold hover:bg-blue-500/20">Conectar com Google (Agenda + Nuvem)</button>
+        <div class="grid grid-cols-2 gap-2">
+          <button type="button" onclick="pushToCloud(true)" class="px-3 py-2 text-[11px] bg-slate-100 dark:bg-slate-800 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700">⬆ Enviar p/ Nuvem</button>
+          <button type="button" onclick="pullFromCloud()" class="px-3 py-2 text-[11px] bg-slate-100 dark:bg-slate-800 rounded-xl font-semibold hover:bg-slate-200 dark:hover:bg-slate-700">⬇ Carregar da Nuvem</button>
+        </div>
       </div>
     </div>
     <div class="flex items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
@@ -584,7 +588,10 @@ document.getElementById('serviceForm').addEventListener('submit', (e) => {
   showToast(`Serviço ${code} lançado com sucesso!`);
 });
 
-function saveStorage() { localStorage.setItem('services_engenharia', JSON.stringify(services)); }
+function saveStorage() {
+  localStorage.setItem('services_engenharia', JSON.stringify(services));
+  if (googleConnected) pushToCloud(false);
+}
 
 // ---------- PRIORIDADE / BADGES ----------
 function priorityBadge(p) {
@@ -834,14 +841,22 @@ function saveProgressModal() {
   showToast('Apontamento registrado!');
 }
 
-// ---------- GOOGLE CALENDAR / GMAIL ----------
+// ---------- GOOGLE CALENDAR / GMAIL / NUVEM (DRIVE) ----------
 let gapiInited = false, gisInited = false, tokenClient = null, googleConnected = false;
+const CLOUD_FILE_NAME = 'controle_servicos_engenharia_cloud.json';
+const GOOGLE_SCOPES = 'https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/drive.appdata';
 
 function gapiLoaded() { gapi.load('client', initGapiClient); }
 async function initGapiClient() {
   if (!settings.googleApiKey) return;
   try {
-    await gapi.client.init({ apiKey: settings.googleApiKey, discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'] });
+    await gapi.client.init({
+      apiKey: settings.googleApiKey,
+      discoveryDocs: [
+        'https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest',
+        'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest'
+      ]
+    });
     gapiInited = true;
   } catch (err) { console.error('Erro ao iniciar gapi:', err); }
 }
@@ -849,7 +864,7 @@ function gisLoaded() {
   if (!settings.googleClientId) { gisInited = true; return; }
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: settings.googleClientId,
-    scope: 'https://www.googleapis.com/auth/calendar.events',
+    scope: GOOGLE_SCOPES,
     callback: ''
   });
   gisInited = true;
@@ -867,15 +882,91 @@ function updateGoogleStatus() {
 function connectGoogle() {
   if (!settings.googleClientId || !settings.googleApiKey) { showToast('Salve o Client ID e a API Key primeiro.'); return; }
   if (!gapiInited || !gisInited || !tokenClient) { showToast('Carregando bibliotecas do Google, aguarde e tente novamente...'); initGoogleClients(); return; }
-  tokenClient.callback = (resp) => {
+  tokenClient.callback = async (resp) => {
     if (resp.error) { showToast('Falha na autenticação com o Google.'); return; }
     googleConnected = true;
     updateGoogleStatus();
     render();
-    showToast('Conectado à Google Agenda!');
+    showToast('Conectado ao Google!');
+    await handleCloudAfterConnect();
   };
   tokenClient.requestAccessToken({ prompt: gapi.client.getToken() === null ? 'consent' : '' });
 }
+
+// ---------- NUVEM (Google Drive - pasta privada appData) ----------
+async function findCloudFile() {
+  const resp = await gapi.client.drive.files.list({
+    spaces: 'appDataFolder',
+    q: `name='${CLOUD_FILE_NAME}' and trashed=false`,
+    fields: 'files(id, modifiedTime)'
+  });
+  return (resp.result.files && resp.result.files[0]) || null;
+}
+async function pushToCloud(manual) {
+  if (!googleConnected) { if (manual) { showToast('Conecte-se ao Google primeiro.'); openSettingsModal(); } return; }
+  try {
+    const payload = JSON.stringify({ services, settings, serviceCounter, updatedAt: new Date().toISOString() });
+    const file = await findCloudFile();
+    if (file) {
+      await gapi.client.request({
+        path: `/upload/drive/v3/files/${file.id}`,
+        method: 'PATCH',
+        params: { uploadType: 'media' },
+        body: payload
+      });
+    } else {
+      const boundary = 'zahab_boundary_314159';
+      const delimiter = `\r\n--${boundary}\r\n`;
+      const closeDelim = `\r\n--${boundary}--`;
+      const metadata = { name: CLOUD_FILE_NAME, parents: ['appDataFolder'], mimeType: 'application/json' };
+      const multipartBody = delimiter + 'Content-Type: application/json\r\n\r\n' + JSON.stringify(metadata)
+        + delimiter + 'Content-Type: application/json\r\n\r\n' + payload + closeDelim;
+      await gapi.client.request({
+        path: '/upload/drive/v3/files',
+        method: 'POST',
+        params: { uploadType: 'multipart' },
+        headers: { 'Content-Type': `multipart/related; boundary="${boundary}"` },
+        body: multipartBody
+      });
+    }
+    if (manual) showToast('Dados enviados para a nuvem!');
+  } catch (err) { console.error(err); if (manual) showToast('Erro ao enviar para a nuvem.'); }
+}
+async function pullFromCloud() {
+  if (!googleConnected) { showToast('Conecte-se ao Google primeiro.'); openSettingsModal(); return; }
+  try {
+    const file = await findCloudFile();
+    if (!file) { showToast('Nenhum backup encontrado na nuvem ainda.'); return; }
+    const resp = await gapi.client.drive.files.get({ fileId: file.id, alt: 'media' });
+    const data = typeof resp.result === 'object' && resp.result !== null ? resp.result : JSON.parse(resp.body);
+    if (data && Array.isArray(data.services)) {
+      services = data.services;
+      if (data.settings) settings = { ...settings, ...data.settings };
+      if (data.serviceCounter) serviceCounter = data.serviceCounter;
+      localStorage.setItem('services_engenharia', JSON.stringify(services));
+      localStorage.setItem('settings_engenharia', JSON.stringify(settings));
+      localStorage.setItem('service_counter_engenharia', serviceCounter);
+      paintHeaderFromSettings();
+      render();
+      showToast('Dados carregados da nuvem!');
+    } else { showToast('Backup da nuvem inválido.'); }
+  } catch (err) { console.error(err); showToast('Erro ao carregar da nuvem.'); }
+}
+async function handleCloudAfterConnect() {
+  try {
+    const file = await findCloudFile();
+    if (file) {
+      const when = new Date(file.modifiedTime).toLocaleString('pt-BR');
+      if (confirm(`Encontramos dados salvos na nuvem (última atualização: ${when}).\nDeseja carregar esses dados agora? Isso substitui os dados deste aparelho.`)) {
+        await pullFromCloud();
+      }
+    } else {
+      await pushToCloud(false);
+      showToast('Backup inicial enviado para a nuvem.');
+    }
+  } catch (err) { console.error(err); }
+}
+
 function addOneDay(dateStr) {
   const d = new Date(dateStr + 'T00:00:00');
   d.setDate(d.getDate() + 1);
